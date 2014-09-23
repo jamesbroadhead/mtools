@@ -754,14 +754,17 @@ class MLaunchTool(BaseCmdLineTool):
                found_cluster_admin = "clusterAdmin" in self.args['auth_roles']
 
             if not found_cluster_admin:
-                warnings.warn("the stop command will not work with auth "
-                              "because the user does not have the "
-                              "clusterAdmin role")
+                warnings.warn("the stop command will not work with auth if the user does not have the clusterAdmin role")
 
-            self._add_user(sorted(nodes)[0], name=self.args['username'],
-                           password=self.args['password'],
-                           database=self.args['auth_db'],
-                           roles=roles)
+            self._add_user(sorted(nodes)[0], name=self.args['username'], password=self.args['password'], database=self.args['auth_db'], roles=roles)
+
+            if self.args['sharded']:
+                for shard in shard_names:
+                    members = sorted(self.get_tagged([shard]))
+                    if self.args['verbose']:
+                        print "adding users to %s" % shard
+                    self._add_user(members[0], name=self.args['username'], password=self.args['password'],
+                                  database=self.args['auth_db'], roles=roles)
 
             if self.args['verbose']:
                 print("added user %s on %s database" % (self.args['username'],
