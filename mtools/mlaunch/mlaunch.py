@@ -724,7 +724,11 @@ class MLaunchTool(BaseCmdLineTool):
             nodes = []
 
             if self.args['sharded']:
-                nodes = self.get_tagged(['mongos', 'running'])
+                if self._wait_for_primary():
+                    nodes = self.get_tagged(['mongos', 'running'])
+                else:
+                    raise RuntimeError("failed to find a primary, so adding "
+                                       "admin user isn't possible")
             elif self.args['single']:
                 nodes = self.get_tagged(['single', 'running'])
             elif self.args['replicaset']:
@@ -761,6 +765,7 @@ class MLaunchTool(BaseCmdLineTool):
                            database=self.args['auth_db'],
                            roles=roles)
 
+            # Under heavy machine load, elections may not have completed yet.
             if self.args['sharded']:
                 for shard in shard_names:
                     members = sorted(self.get_tagged([shard]))
@@ -1760,13 +1765,29 @@ class MLaunchTool(BaseCmdLineTool):
 
     def _wait_for_primary(self):
 
-        hosts = ([x['host']
-                  for x in self.config_docs[self.args['name']]['members']])
-        rs_name = self.config_docs[self.args['name']]['_id']
+        if self.args['sharded']:
+            results = [
+                self.__wait_for_primary(
+                    [x['host'] for x in rs_info['members']],
+                    rs_name, set_tags=False)
+                for rs_name, rs_info in self.config_docs.items() ]
+            print(results)
+            return all(results)
+
+        else:
+            hosts = [x['host']
+                  for x in self.config_docs[self.args['name']]['members']]
+            rs_name = self.config_docs[self.args['name']]['_id']
+
+            return self.__wait_for_primary(hosts, rs_name)
+
+
+
+    def __wait_for_primary(self, hosts, rs_name, set_tags=True):
         mrsc = self.client(hosts, replicaSet=rs_name,
                            serverSelectionTimeoutMS=30000)
 
-        if mrsc.is_primary:
+        if mrsc.is_primary and set_tags:
             # update cluster tags now that we have a primary
             self.cluster_tags['primary'].append(mrsc.primary[1])
             self.cluster_tags['secondary'].extend(list(map(itemgetter(1),
@@ -1781,8 +1802,9 @@ class MLaunchTool(BaseCmdLineTool):
                 if len(self.cluster_tree['secondary']) <= i:
                     self.cluster_tree['secondary'].append([])
                 self.cluster_tree['secondary'][i].append(secondary)
-            return True
 
+        if mrsc.is_primary:
+            return True
         return False
 
     # --- below are command line constructor methods, that build the command
